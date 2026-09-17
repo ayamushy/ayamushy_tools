@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ayamushy Tools</title>
+<style>
+  :root{--bg:#12141a;--panel:#1a1d26;--line:#2c313d;--fg:#e6e8ee;--dim:#8b93a7;--acc:#6ea8fe;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  .wrap{max-width:820px;margin:0 auto;padding:40px 16px;}
+  h1{font-size:20px;letter-spacing:.5px;margin:0 0 4px;}
+  .sub{color:var(--dim);margin:0 0 28px;}
+  .mt-grid{display:grid;gap:12px;}
+  a.mt-card{display:block;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:16px 18px;text-decoration:none;color:var(--fg);}
+  a.mt-card:hover{border-color:var(--acc);}
+  .mt-card-title{display:block;font-size:15px;color:var(--acc);margin-bottom:4px;}
+  .mt-card-blurb{display:block;color:var(--dim);font-size:13px;}
+</style>
+</head>
+<body>
+<style id="mtnav-style">
+.mtnav{display:flex;flex-wrap:wrap;gap:4px;align-items:center;
+  background:#12141a;border-bottom:1px solid #2c313d;padding:8px 14px;margin:0;
+  font:13px/1.4 ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+.mtnav .mtnav-brand{color:#e6e8ee;font-weight:700;letter-spacing:.5px;
+  text-transform:uppercase;font-size:12px;text-decoration:none;margin-right:12px;}
+.mtnav .mtnav-brand:hover{color:#6ea8fe;}
+.mtnav a.mtnav-link{color:#8b93a7;text-decoration:none;padding:5px 10px;
+  border-radius:4px;border:1px solid transparent;}
+.mtnav a.mtnav-link:hover{color:#6ea8fe;border-color:#6ea8fe;}
+.mtnav a.mtnav-link.active{color:#6ea8fe;border-color:#6ea8fe;background:#1a1d26;}
+/* solver ships a light theme (class on <html>); match it there only */
+html.theme-light .mtnav{background:#f4f5f7;border-bottom-color:#d7dbe2;}
+html.theme-light .mtnav .mtnav-brand{color:#1a1d26;}
+html.theme-light .mtnav a.mtnav-link{color:#5b6376;}
+html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;border-color:#2b6cb0;}
+</style>
+<nav id="mtnav" class="mtnav"><a class="mtnav-brand" href="./">Ayamushy</a><a class="mtnav-link" href="gear_progression/">Gear Progression</a><a class="mtnav-link" href="scouter/">Scouter</a><a class="mtnav-link" href="solver/">Solver</a></nav><script>(function(){var n=document.getElementById('mtnav');if(!n)return;var s=getComputedStyle(document.body);n.style.marginTop='-'+s.paddingTop;n.style.marginLeft='-'+s.paddingLeft;n.style.marginRight='-'+s.paddingRight;})();</script>
+<div class="wrap">
+  <h1>Ayamushy Tools</h1>
+  <p class="sub">A small set of MapleStory helpers.</p>
+  <div class="mt-grid">
+    <a class="mt-card" href="gear_progression/"><span class="mt-card-title">Gear Progression</span><span class="mt-card-blurb">Rank your next upgrade — star force, potential cubes and flames priced on one scale.</span></a>
+    <a class="mt-card" href="scouter/"><span class="mt-card-title">Scouter</span><span class="mt-card-blurb">Read your STAT window straight off a screenshot and fill maplescouter.com.</span></a>
+    <a class="mt-card" href="solver/"><span class="mt-card-title">Solver</span><span class="mt-card-blurb">Legion board solver — place your pieces and let the WASM search fill the board.</span></a>
+  </div>
+</div>
+</body>
+</html>
