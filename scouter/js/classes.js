@@ -30,6 +30,7 @@ window.CLASSES = [
   {"key": "DemonAvenger", "ko": "데몬어벤져", "label": "Demon Avenger"},
   {"key": "DemonSlayer", "ko": "데몬슬레이어", "label": "Demon Slayer"},
   {"key": "DualBlader", "ko": "듀얼블레이드", "label": "Dual Blader", "gms": "Dual Blade"},
+  {"key": "Erel", "ko": "에렐", "label": "Erel"},
   {"key": "Eunwol", "ko": "은월", "label": "Eunwol", "gms": "Shade"},
   {"key": "Evan", "ko": "에반", "label": "Evan"},
   {"key": "FlameWizard", "ko": "플레임위자드", "label": "Flame Wizard", "gms": "Blaze Wizard"},
