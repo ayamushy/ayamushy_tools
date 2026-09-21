@@ -485,8 +485,8 @@ html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;bor
   }
   // "next 27 sym · 4d" — symbols to the target, with days appended when a rate is set
   function symMeta(label,syms,days,maxed){
-    if(maxed)return label+' maxed';
-    return label+' '+syms+' sym'+((days==="-"||days==null)?"":' · '+days+'d');
+    if(maxed)return label+': maxed';
+    return label+': '+syms+' sym'+((days==="-"||days==null)?"":' · '+days+'d');
   }
 
   // ---------- state ----------
