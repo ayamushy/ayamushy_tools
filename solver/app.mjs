@@ -1,5 +1,5 @@
-import { initSolver, getLayout, solve, cancelSolve, isAsync } from './wasm.mjs';
-import { PIECES, PIECE_COLORS, cellCount, decodeCell } from './pieces.mjs';
+import { initSolver, getLayout, solve, cancelSolve, isAsync, parallelism } from './wasm.mjs?v=274213b5';
+import { PIECES, PIECE_COLORS, cellCount, decodeCell } from './pieces.mjs?v=274213b5';
 
 const $ = (id) => document.getElementById(id);
 
@@ -499,6 +499,11 @@ async function actionSolve() {
     paintAll();
   }
 
+  /* Show we're on it right away — the worker pool may still be restarting
+   * after the previous solve, which can take a moment. */
+  $('status').textContent = 'solving…';
+  $('status').className = '';
+
   /* The worker may need to (re)initialize after a previous Stop. Await that
    * BEFORE we decide whether to show the Stop button; otherwise isAsync()
    * still reports false from the cancelled worker's reset state. */
@@ -507,9 +512,11 @@ async function actionSolve() {
 
   const cap = readMaxIter();
   const async_ = isAsync();
+  const par = parallelism();
+  const racing = par > 1 ? `, racing ${par} strategies` : '';
   $('status').textContent = async_
-    ? (cap > 0 ? `solving… (cap ${fmtInt(cap)} iters) — Stop is safe to hit`
-               : `solving… (no cap) — Stop is safe to hit`)
+    ? (cap > 0 ? `solving… (cap ${fmtInt(cap)} iters${racing}) — Stop is safe to hit`
+               : `solving… (no cap${racing}) — Stop is safe to hit`)
     : (cap > 0 ? `solving… (cap ${fmtInt(cap)} iters; page will freeze)`
                : `solving… (no cap; page will freeze until done)`);
   $('status').className = '';
@@ -533,7 +540,9 @@ async function actionSolve() {
       state.board = result.finalBoard;
       state.placementMap = buildPlacementMap(result.placements);
       paintAll();
-      $('status').textContent = 'solved';
+      $('status').textContent = result.strategies > 1
+        ? `solved — ${result.isV1 ? 'the classic v1 search' : `strategy ${result.strategy + 1}`} won the race of ${result.strategies}`
+        : 'solved';
       $('status').className = 'ok';
     } else {
       $('status').textContent = cap > 0 && result.iterations >= cap
