@@ -406,6 +406,7 @@ html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;bor
     "20% chance to deal X% + dmg":[4,8,12,16,20],
     "70% chance to heal X HP%":[2,4,6,8,10],
     "70% chance to restore X MP%":[2,4,6,8,10],
+    "All Stats / Max HP":["10 / +500","20 / +1,000","30 / +1,500","40 / +2,000","50 / +2,500"],  // Lethe: two effects, display-only
     "Bonus EXP %":[4,6,8,10,12],
     "Boss Damage %":[1,2,3,5,6],
     "Buff Duration %":[5,10,15,20,25],
@@ -429,7 +430,7 @@ html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;bor
   };
   // full job roster: n=Job, g=Faction (sheet "Type" col), c=Class/archetype, b=default legion bonus.
   // Faction, Class and default bonus all derive from the Job; data comes from the sheet itself.
-  var FACTIONS=["Explorer","Cygnus","Heroes","Resistance","Nova","Sengoku","Flora","Anima","Jianghu","Shine","Kinesis","Zero"];
+  var FACTIONS=["Explorer","Cygnus","Heroes","Resistance","Nova","Sengoku","Flora","Anima","Jianghu","Shine","Demon","Kinesis","Zero"];
   var CLASSES=[
     {n:"Arch Mage (F/P)",g:"Explorer",c:"Mage",b:"MP %"},{n:"Arch Mage (I/L)",g:"Explorer",c:"Mage",b:"INT"},
     {n:"Beast Tamer",g:"Explorer",c:"Mage",b:"IED %"},{n:"Bishop",g:"Explorer",c:"Mage",b:"INT"},
@@ -458,6 +459,7 @@ html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;bor
     {n:"Hoyoung",g:"Anima",c:"Thief",b:"LUK"},{n:"Lara",g:"Anima",c:"Mage",b:"INT"},{n:"Ren",g:"Anima",c:"Warrior",b:"Jump"},
     {n:"Lynn",g:"Jianghu",c:"Mage",b:"IED %"},{n:"Mo Xuan",g:"Jianghu",c:"Pirate",b:"Critical Damage %"},
     {n:"Erel",g:"Shine",c:"Warrior",b:"Boss Damage %"},{n:"Sia",g:"Shine",c:"Mage",b:"Dmg"},
+    {n:"Lethe",g:"Demon",c:"Mage",b:"All Stats / Max HP"},  // INT/LUK (Mage arch covers it); source: nexon.com news 47306
     {n:"Kinesis",g:"Kinesis",c:"Mage",b:"INT"},{n:"Zero",g:"Zero",c:"Warrior",b:"Bonus EXP %"}
   ];
   var CLASS_BONUS={},CLASS_SET={},CLASS_FACTION={},CLASS_ARCH={};
@@ -638,6 +640,7 @@ html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;bor
     {cls:"Adele (party 3)",arch:"Warrior",e1:"DMG",p1:9,e2:"DMG",p2:6},
     {cls:"Thief",arch:"Thief",e1:"DMG",p1:13.5},
     {cls:"Kain",arch:"Archer",e1:"DMG",p1:12.5},
+    {cls:"Lethe",arch:"Mage",e1:"DMG",p1:12},   // Covenant: +12% damage while a summon is active
     {cls:"Lynn",arch:"Mage",e1:"DMG",p1:10},
     {cls:"Adele (solo)",arch:"Warrior",e1:"DMG",p1:9,e2:"DMG",p2:0},
     {cls:"Luminous",arch:"Mage",e1:"IED",p1:20}
