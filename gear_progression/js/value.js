@@ -309,6 +309,14 @@ function buildWeights(parsed, opts = {}) {
  * the answer to "where is the class selector": the paste already encodes the
  * class, and this line makes the inference visible instead of magic.
  */
+/**
+ * True for an HP-based build (Demon Avenger). DA scales off HP%, so HP% outweighing
+ * the stat's own % is the scale-free signature -- true in both paste formats.
+ */
+function weightsHpBuild(w) {
+  return !!w && (w.hpStat || 0) > 0 && (w.hpPct || 0) >= (w.mainPct || 0);
+}
+
 function weightsProfileText(w) {
   const flats = w.statByStat || {};
   // Thresholds are RELATIVE to the biggest weight, never absolute. The percent
@@ -319,9 +327,7 @@ function weightsProfileText(w) {
   const secondaries = STAT_NAMES.filter(s =>
     (flats[s] || 0) > 0 && !primaries.includes(s));
   const bits = [];
-  // Demon Avenger scales off HP%, so HP% outweighing the stat's own % is the
-  // scale-free signature -- true in both formats.
-  if ((w.hpStat || 0) > 0 && (w.hpPct || 0) >= (w.mainPct || 0)) {
+  if (weightsHpBuild(w)) {
     bits.push('HP-based build (Demon Avenger)');
   } else if (primaries.length > 1) {
     bits.push(primaries.join('/') + ' all primary (Xenon-style)');

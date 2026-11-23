@@ -92,15 +92,16 @@ const FLAME_HP_PER_TIER = [
   [240, 249, 680], [250, Infinity, 700],
 ];
 
-// weapon attack flame, as a fraction of the weapon's base attack
-const FLAME_WATT_ADV = {
-  '160-199': { 3: 0.15, 4: 0.22,  5: 0.3025, 6: 0.3993,  7: 0.512435 },
-  '200+':    { 3: 0.18, 4: 0.264, 5: 0.363,  6: 0.47916, 7: 0.614922 },
-};
-const FLAME_WATT_NON_ADV = {
-  '160-199': { 1: 0.05, 2: 0.11,  3: 0.185,  4: 0.2662,  5: 0.366025, 6: 0.43923,  7: 0.512435 },
-  '200+':    { 1: 0.06, 2: 0.132, 3: 0.2178, 4: 0.31944, 5: 0.43923,  6: 0.527076, 7: 0.614922 },
-};
+// Weapon attack flame = base ATT x unit x multiplier[tier], rounded up, where the
+// unit steps 1% per 40 item levels: (floor(level/40)+1)% -- 4% at 120-159, 5% at
+// 160-199, 6% at 200-239, 7% at 240+. The multipliers are tier x 1.1^k, read off
+// MathBro's worker.js tables (his 200+ row / 6%). Those tables only had 160-199 and
+// 200+, so lv250 was priced at 6% and lv150 at 5%: a lv250 base-280 weapon's real
+// 201 ATT (ceil(280 x 7% x 10.2487)) was unreachable in the model. whackybeanz
+// computes it the same way, ceil included.
+const FLAME_WATT_MULT_ADV     = { 3: 3, 4: 4.4, 5: 6.05,   6: 7.986,  7: 10.2487 };
+const FLAME_WATT_MULT_NON_ADV = { 1: 1, 2: 2.2, 3: 3.63,   4: 5.324,  5: 7.3205,
+                                  6: 8.7846, 7: 10.2487 };
 
 // boss damage is 2 points per tier, plain damage 1 (worker.js:755)
 const FLAME_BOSS_PER_TIER = 2;
@@ -179,11 +180,10 @@ function flameTrackedSlots(kind, level, w, opts = {}) {
   if (isWeapon) {
     // weapon attack is a fraction of base attack and the fractions are not
     // linear in tier, so this slot needs the table rather than a coefficient
-    const tbl = (nonAdvantaged ? FLAME_WATT_NON_ADV : FLAME_WATT_ADV)[
-      level >= 200 ? '200+' : '160-199'];
     for (const [label, weight] of [['ATT', w.att], ['MATT', w.matt]]) {
       if (weight) {
-        slots.push({ label, at: (t) => baseAtt * (tbl[t] || 0) * weight });
+        slots.push({ label,
+          at: (t) => flameWeaponAtt(baseAtt, level, t, nonAdvantaged) * weight });
       }
     }
     lin('boss', FLAME_BOSS_PER_TIER * w.boss);
@@ -251,11 +251,17 @@ function flameDistribution(kind, level, w, opts = {}) {
     subsetProb[k] = p;
   }
 
+  // Outcomes are merged into bins a hundredth of a main-stat point wide. The width is
+  // in the paste's own unit -- a flat 0.01 was a hundredth of a point on a stat paste
+  // but a whole point on a %fd one, where a point is worth ~0.01. flameReroll needs
+  // the same width to tell "your own flame again" from "better", so it rides along
+  // on the returned array.
+  const step = 0.01 * (flameScoreDivisor(w) || 1);
   const acc = new Map();
   const add = (score, prob) => {
     if (prob <= 0) return;
-    const key = Math.round(score * 100) / 100;
-    acc.set(key, (acc.get(key) || 0) + prob);
+    const bin = Math.round(score / step);
+    acc.set(bin, (acc.get(bin) || 0) + prob);
   };
 
   // Walk every subset of the tracked slots up to size 4, with every tier
@@ -276,9 +282,11 @@ function flameDistribution(kind, level, w, opts = {}) {
   };
   walk(0, 0, 0, 1);
 
-  return [...acc.entries()]
-    .map(([score, prob]) => ({ score, prob }))
+  const out = [...acc.entries()]
+    .map(([bin, prob]) => ({ score: bin * step, prob }))
     .sort((a, b) => a.score - b.score);
+  out.step = step;
+  return out;
 }
 
 /**
@@ -290,12 +298,18 @@ function flameDistribution(kind, level, w, opts = {}) {
  * flames it takes to see any improvement at all.
  */
 function flameReroll(dist, currentValue = 0) {
+  // Compare bins, not raw floats. The outcomes are binned, the current flame is not,
+  // so an item worth 217.43733 sat under its own re-roll's bin (217.44) and every
+  // copy of its own flame counted as an improvement -- 12% too many "better" rolls
+  // on a real pair of gloves.
+  const step = dist.step || 0.01;
+  const curBin = Math.round(currentValue / step);
   let mass = 0, eScore = 0, pImprove = 0, gain = 0, best = 0;
   for (const { score, prob } of dist) {
     mass += prob;
     eScore += prob * score;
     best = Math.max(best, score);
-    if (score > currentValue) {
+    if (Math.round(score / step) > curBin) {
       pImprove += prob;
       gain += prob * (score - currentValue);
     }
@@ -431,8 +445,11 @@ function flameCurrentValue(f, w) {
  */
 function flameScoreDivisor(w) {
   if (!w) return 0;
-  const main = (w.statByStat && w.statByStat[w.mainStat]) || 0;
-  return Math.max(main, w.hpStat || 0);
+  // Decided by the build, not by which weight is larger: per POINT, STR outweighs HP
+  // even for a DA (1.82 vs 1 on a real paste), so taking the max divided a DA's
+  // score by STR and quoted 549 for a flame worth 1000 HP.
+  if (weightsHpBuild(w)) return w.hpStat;
+  return (w.statByStat && w.statByStat[w.mainStat]) || 0;
 }
 
 function flameScore(value, w) {
@@ -516,15 +533,21 @@ const FLAMEABLE = new Set([
 
 /** Weapon attack per tier is a fraction of base attack and not linear in tier. */
 function flameWeaponAttFrac(level, tier, nonAdvantaged) {
-  const tbl = (nonAdvantaged ? FLAME_WATT_NON_ADV : FLAME_WATT_ADV)[
-    level >= 200 ? '200+' : '160-199'];
-  return tbl[tier] || 0;
+  const mult = (nonAdvantaged ? FLAME_WATT_MULT_NON_ADV : FLAME_WATT_MULT_ADV)[tier] || 0;
+  return (Math.floor(level / 40) + 1) / 100 * mult;
+}
+
+/** The ATT a weapon flame tier actually shows: always a whole number, rounded up. */
+function flameWeaponAtt(baseAtt, level, tier, nonAdvantaged) {
+  const raw = (baseAtt || 0) * flameWeaponAttFrac(level, tier, nonAdvantaged);
+  // the epsilon keeps an exact product (100 x 6% x 3 = 18.000000000000004) at 18
+  return raw > 0 ? Math.ceil(raw - 1e-9) : 0;
 }
 
 const _statAmt  = (lv, t) => flameBracket(FLAME_STAT_PER_TIER, lv) * t;
 const _comboAmt = (lv, t) => flameBracket(FLAME_COMBO_PER_TIER, lv) * t;
 const _hpAmt    = (lv, t) => flameBracket(FLAME_HP_PER_TIER, lv) * t;
-const _attAmt   = (lv, t, c) => c.isWeapon ? c.baseAtt * flameWeaponAttFrac(lv, t, c.nonAdvantaged) : t;
+const _attAmt   = (lv, t, c) => c.isWeapon ? flameWeaponAtt(c.baseAtt, lv, t, c.nonAdvantaged) : t;
 
 // Every line a bonus-stat roll can produce. `stats` is the stat(s) a line credits
 // in the Total Value box -- a combo credits both. Pool order here is only an

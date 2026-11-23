@@ -400,7 +400,7 @@ function cubeValue(sums, w) {
  * small improvement.
  */
 function cubeTargetScan(cubeType, category, w, currentValue, limit = 5,
-                        constraints = null, itemLevel = 0, sale = false) {
+                        constraints = null, itemLevel = 0, sale = false, pct = 0) {
   let combos = cubeCombos(cubeType, category, itemLevel, cubeSubStats(w));
 
   // A constraint is a line you insist on, not a line you value. Cooldown is the
@@ -418,12 +418,18 @@ function cubeTargetScan(cubeType, category, w, currentValue, limit = 5,
   // Round when grouping: two different line sets can land on the same value but
   // differ in the 13th decimal, which would otherwise split one threshold into
   // several near-duplicate rows.
+  const round4 = (x) => Math.round(x * 1e4) / 1e4;
   const scored = combos.map(c => ({
     prob: c.prob,
-    value: Math.round(cubeValue(c.sums, w) * 1e4) / 1e4,
+    value: round4(cubeValue(c.sums, w)),
     sums: c.sums,
   }));
   scored.sort((a, b) => b.value - a.value);
+  // The cutoff has to be rounded the same way. Unrounded, an item worth 651.56666...
+  // sits just under its own re-roll (rounded up to 651.5667), so "roll these exact
+  // lines again" slipped in as a target whose whole gain came from the better combos
+  // it happens to absorb.
+  const cutoff = round4(currentValue);
 
   const cost = cubeCostPerUse(cubeType, itemLevel, sale);
   const out = [];
@@ -437,7 +443,7 @@ function cubeTargetScan(cubeType, category, w, currentValue, limit = 5,
       cumWeighted += scored[i].prob * scored[i].value;
       i++;
     }
-    if (v <= currentValue || cumProb <= 0) continue;
+    if (v <= cutoff || cumProb <= 0) continue;
 
     const expected = cumWeighted / cumProb;
     const gain = expected - currentValue;
@@ -451,7 +457,10 @@ function cubeTargetScan(cubeType, category, w, currentValue, limit = 5,
       costPerCube: cost,
       expectedValue: expected,
       gain,
-      per: (cost / cumProb) / gain,
+      // Pruned on the same price the ranking shows. At a percentile that is the cube
+      // count at pXX, not the mean; pruning on the mean dropped rungs that are up to
+      // 7% cheaper at p50-60 before they could be priced there.
+      per: (pct ? geometricPct(cumProb, pct) * cost : cost / cumProb) / gain,
       example: scored[i - 1].sums,
     });
   }
@@ -509,8 +518,8 @@ const _scanCache = new Map();
 function cubeScanCacheClear() { _scanCache.clear(); }
 
 function cubeTargetScanAll(category, w, currentValue, limit = 5,
-                           constraints = null, itemLevel = 0, sale = false) {
-  const key = `${category}|${currentValue}|${limit}|${itemLevel}|${sale ? 1 : 0}`
+                           constraints = null, itemLevel = 0, sale = false, pct = 0) {
+  const key = `${category}|${currentValue}|${limit}|${itemLevel}|${sale ? 1 : 0}|${pct || 0}`
             + `|${constraints ? JSON.stringify(constraints) : ''}`;
   const memo = _scanCache.get(key);
   if (memo) return memo;
@@ -518,7 +527,7 @@ function cubeTargetScanAll(category, w, currentValue, limit = 5,
   let all = [];
   for (const ct of CUBE_TYPES) {
     for (const row of cubeTargetScan(ct, category, w, currentValue,
-                                     Infinity, constraints, itemLevel, sale)) {
+                                     Infinity, constraints, itemLevel, sale, pct)) {
       all.push(Object.assign({ cubeType: ct }, row));
     }
   }
@@ -572,16 +581,32 @@ function cubeAtPct(t, pct) {
   return { cubes, cost: cubes * t.costPerCube };
 }
 
-/** Value of the lines an item currently has. `lines` is [[name, value], ...]. */
+/**
+ * Value of the lines an item currently has. `lines` is [[name, value], ...].
+ * Stored lines already hold the level-adjusted value the dropdown offered; a level
+ * change re-expresses them through cubeRelevelLines, so itemLevel is not needed here.
+ */
 function cubeCurrentValue(lines, w, itemLevel = 0) {
   const sums = {};
   for (const [name, value] of lines) {
     if (!name || name === 'Zero') continue;
-    // Stored lines already hold the level-adjusted value the dropdown offered, so
-    // itemLevel is only used to re-clamp a value saved before the level changed.
     sums[name] = (sums[name] || 0) + Number(value || 0);
   }
   return cubeValue(sums, w);
+}
+
+/**
+ * The same lines at another item level: a 13% main-stat line on a 160 item is the
+ * 12% line once the item is set to 150, and back again. Without this a lowered item
+ * kept values it cannot roll, its current value stayed inflated, and every cube
+ * target for it was priced against a ceiling that does not exist.
+ */
+function cubeRelevelLines(lines, fromLevel, toLevel) {
+  return lines.map(([name, value]) => {
+    if (!name || name === 'Zero' || !value) return [name, value];
+    const d = cubeLineValue(name, 0, toLevel) - cubeLineValue(name, 0, fromLevel);
+    return [name, Number(value) + d];
+  });
 }
 
 // Display order for the line dropdowns: offensive lines first, then the

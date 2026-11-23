@@ -131,10 +131,36 @@ function load() {
 }
 
 // fill in whatever a partial or older save is missing, so nothing reads undefined
+/*
+ * Amounts are keyed by weight key, and commit 41d6e45 (22/09) renamed those keys:
+ * the regular stat went flat.X -> stat.X, "Not Affected by %" went nopct.X -> flat.X,
+ * and flat HP went hpFlat -> hpStat. An old save read under the new names divides
+ * the regular stat by 1 instead of 30 (30x too heavy) and the not-affected row by 30
+ * instead of 200 -- with no warning, since nothing looks like a per-line total.
+ *
+ * A save is old exactly when it holds a key only the old names used (nopct.* or
+ * hpFlat). The "MapleScouter defaults" button always wrote those alongside flat.*, so
+ * any save it touched is caught. New-format saves never contain them, which keeps
+ * this idempotent.
+ */
+function migrateAmountKeys(amounts) {
+  const keys = Object.keys(amounts);
+  if (!keys.some(k => k === 'hpFlat' || k.startsWith('nopct.'))) return amounts;
+  const out = {};
+  for (const k of keys) {
+    const nk = k === 'hpFlat' ? 'hpStat'
+             : k.startsWith('flat.') ? 'stat.' + k.slice(5)
+             : k.startsWith('nopct.') ? 'flat.' + k.slice(6)
+             : k;
+    out[nk] = amounts[k];
+  }
+  return out;
+}
+
 function migrate(s) {
   s.sf = Object.assign({}, SF_DEFAULTS, s.sf || {});
   s.milestones = Array.isArray(s.milestones) && s.milestones.length
-    ? s.milestones : DEFAULT_MILESTONES.slice();
+    ? s.milestones.filter(Number.isInteger) : DEFAULT_MILESTONES.slice();
   // Persisted so the choice survives a refresh. It has to be state rather than a
   // module default: browsers restore <select> values across a reload, so a default
   // held only in JS drifts from the control the moment you change it and come back.
@@ -162,19 +188,24 @@ function migrate(s) {
   for (const id of Object.keys(s.chars)) {
     const c = s.chars[id] = Object.assign(newChar('?'), s.chars[id]);
     if (!c.amounts || typeof c.amounts !== 'object') c.amounts = {};
+    c.amounts = migrateAmountKeys(c.amounts);
     if (!WEAPON_KINDS[c.weaponKind]) c.weaponKind = 'none';
     if (!SECONDARY_KINDS[c.secondaryKind]) c.secondaryKind = 'none';
     // fMain/fSub predate the per-stat flame columns. Fold them into the stats the
     // character's own paste points at (a mage: fMain -> fINT, fSub -> fLUK).
     const legacyFlame = Object.values(c.slots || {})
       .some(g => g && ('fMain' in g || 'fSub' in g));
-    const mw = legacyFlame ? buildWeights(parseScouter(c.scouter || '')) : null;
+    const mw = legacyFlame
+      ? buildWeights(parseScouter(c.scouter || ''),
+                     { iedVariant: c.iedVariant, mainStat: c.mainStat, amounts: c.amounts })
+      : null;
     for (const m of SLOTS) {
       const g = c.slots[m.key] = Object.assign(newSlot(m), c.slots[m.key] || {});
       if (!Array.isArray(g.lines) || g.lines.length !== 3) {
         g.lines = [['Zero', 0], ['Zero', 0], ['Zero', 0]];
       }
       g.flameType = flameTypeOrDefault(g.flameType);
+      if (!Number.isInteger(g.star)) g.star = Math.trunc(Number(g.star) || 0);
       // `ignore` was the inverted form of `on`; carry old saves across
       if (Object.prototype.hasOwnProperty.call(g, 'ignore')) {
         g.on = !g.ignore;
@@ -423,12 +454,12 @@ function cubeCandidates(meta, g) {
   // both cube types compete; the frontier picks whichever wins at each rung
   const targets = cubeTargetScanAll(meta.cube, weights, currentValue,
                                     view.bestPerSlot ? 3 : 6, constraints, g.level,
-                                    !!state.cubeSale);
+                                    !!state.cubeSale, view.pct);
   return targets.map(t => {
     const at = cubeAtPct(t, view.pct);
     return {
       slot: meta.label, axis: 'cube',
-      move: `${t.cubeType} → ≥ ${t.threshold.toFixed(0)}${cd < 0 ? ` +${cd}s cd` : ''}`,
+      move: `${t.cubeType} → ≥ ${t.threshold.toFixed(0)}${cd < 0 ? `, ${cd}s cd` : ''}`,
       cost: at.cost, gain: t.gain, per: at.cost / t.gain,
       prob: t.prob, cubes: at.cubes, example: t.example, cubeType: t.cubeType,
       cd: cd < 0 ? cd : 0,
@@ -560,7 +591,9 @@ function bound(obj, key, opts = {}) {
   i.addEventListener('input', () => {
     if (type === 'checkbox') obj[key] = i.checked;
     else if (type === 'text') obj[key] = i.value;
-    else obj[key] = i.value === '' ? 0 : +i.value;
+    // `int` fields (stars) are whole numbers; 16.5★ priced as NaN and the slot
+    // silently dropped out of the ranking as if maxed
+    else obj[key] = i.value === '' ? 0 : (opts.int ? Math.trunc(+i.value) : +i.value);
     save();
     if (opts.onChange) opts.onChange();
     // `local` means the caller refreshes whatever it needs itself. Without it a
@@ -633,8 +666,10 @@ function renderAmounts() {
       save();
       // Deliberately does NOT re-render this grid: rebuilding the inputs mid-keystroke
       // is what once made the second digit of a flame entry vanish.
-      refreshWeights(); renderWeights(); renderRank();
-      for (const m of SLOTS) renderPotValue(m.key);
+      // renderGear (not this grid) because the weights decide which sub-stat line
+      // options a slot offers -- a Xenon's DEX%/LUK% appear only once they qualify --
+      // and it redraws every potential value on the way.
+      refreshWeights(); renderWeights(); renderGear(); renderRank();
     });
     grid.append(el('label', {}, [el('span', { text: r.label }), inp]));
   }
@@ -739,7 +774,13 @@ function renderGear() {
            }, '\u21c5')]
         : [document.createTextNode(meta.label)]),
       el('td', { class: 'num' }, picker(g, 'level', LEVELS.map(l => [l, l]),
-          { number: true, width: '72px', onChange: renderGear,
+          { number: true, width: '72px',
+            // the row is rebuilt after every change, so this is always the level
+            // the saved lines were picked at
+            onChange: ((from) => () => {
+              g.lines = cubeRelevelLines(g.lines, from, g.level);
+              save(); renderGear();
+            })(g.level),
             title: 'potential line values step up at item level 151+' })),
     ];
 
@@ -747,7 +788,8 @@ function renderGear() {
       const kind = statTableKind(g, meta);
       const cap = sfCap(g.level, kind);
       tds.push(
-        el('td', { class: 'num' }, bound(g, 'star', { width: '52px', min: 0, max: 30, title: `cap ${cap}` })),
+        el('td', { class: 'num' }, bound(g, 'star', { width: '52px', min: 0, max: 30, step: '1',
+                                                      int: true, title: `cap ${cap}` })),
         el('td', {}, bound(g, 'sfOn', { type: 'checkbox', title: 'stars bought with meso' })),
         el('td', { class: 'num' }, bound(g, 'spares', { width: '52px', min: 1, title: 'spares you can lose' })),
         el('td', {}, planInput(g)),
@@ -760,7 +802,9 @@ function renderGear() {
       // only the weapon has a base attack; a secondary has none
       meta.key === 'weapon'
         ? el('td', { class: 'num' }, bound(g, 'baseAtt',
-            { width: '64px', min: 0, title: 'base ATT/MATT, used below 16★' }))
+            { width: '64px', min: 0,
+              title: 'base ATT/MATT: star force uses it below 16★, and weapon '
+                   + 'flames at every star (ATT lines are a % of it), so fill it in' }))
         : dash(),
       // cooldown is a constraint rather than a scored stat, and only hats roll it
       meta.key === 'hat'
@@ -819,6 +863,37 @@ function renderPotValue(key) {
   cell.textContent = stat(cubeCurrentValue(g.lines, weights, g.level));
 }
 
+/*
+ * A probability as a percent that never reads as zero when it isn't. Fixed decimals
+ * printed a real 0.02% hat reset as "0.0% per reset" and a weapon's 0.001% as
+ * "0.00%". Two significant digits down to 0.01%, then "<0.01%" -- the row's reset
+ * count carries the magnitude from there.
+ */
+function pctText(p) {
+  const v = p * 100;
+  if (!(v > 0)) return '0%';
+  if (v >= 1) return v.toFixed(1) + '%';
+  if (v >= 0.01) return v.toPrecision(2) + '%';
+  return '<0.01%';
+}
+
+/** Booms as the row quotes them: the pXX count when a percentile is set, else the mean. */
+function sfShownBooms(r) {
+  return view.pct ? sfBoomsAtPct(r, view.pct) : r.booms;
+}
+
+/*
+ * One rule for the warning, so the row colour and its text can't disagree again (the
+ * colour used the mean and also lit Destiny/Astra rows the text had skipped).
+ * Only meaningful when a boom is absorbed by a spare: a Destiny weapon is recovered
+ * by paying and an item with a replacement cost is bought back, so a spares count
+ * says nothing about either.
+ */
+function sfOverSpares(r) {
+  if (r.axis !== 'sf' || r.fixedStars || r.unreachable || r.itemCost || r.recovery) return false;
+  return sfShownBooms(r) > r.spares;
+}
+
 function describe(r) {
   if (r.axis === 'sf') {
     if (r.noTable) {
@@ -834,15 +909,19 @@ function describe(r) {
     // Booms followed the mean even at p85, which read as though a percentile only
     // moved the cost. It moves both -- an expensive climb is expensive BECAUSE it boomed
     // more -- so quote the pXX count when a percentile is set, and say which it is.
+    const booms = sfShownBooms(r);
     const bits = [view.pct
-      ? `p${view.pct}: ${sfBoomsAtPct(r, view.pct).toFixed(2)} booms `
+      ? `p${view.pct}: ${booms.toFixed(2)} booms `
         + `(${r.booms.toFixed(2)} expected)`
-      : `${r.booms.toFixed(2)} booms`];
+      : `${booms.toFixed(2)} booms`];
+    // "of that" qualifies the cost column, so it is priced at the same boom count --
+    // the pXX one when a percentile is set, not the mean.
     if (r.recovery) {
-      bits.push(`${meso(r.booms * r.recovery.fee)} of that in fees`
+      bits.push(`${meso(booms * r.recovery.fee)} of that in fees`
         + ` (${r.recovery.route === 'buy' ? 'revive 10b + buy back to 22★' : 'revive 10b, re-climb'})`);
     } else if (r.itemCost > 0) {
-      bits.push(`${meso(r.booms * r.itemCost)} of that in weapon recovery`);
+      // the global boom item cost or an Astra secondary -- not necessarily a weapon
+      bits.push(`${meso(booms * r.itemCost)} of that replacing the boomed item`);
     }
     if (r.modes && r.modes.length) {
       const uniq = [...new Set(r.modes.map(m => m.mode))];
@@ -850,17 +929,11 @@ function describe(r) {
         ? `mode ${uniq[0]}`
         : r.modes.map(m => `${m.star}★:m${m.mode}`).join(' '));
     }
-    // Only meaningful when a boom is absorbed by a spare. A Destiny weapon is
-    // recovered by paying, not replaced, so a spares count says nothing about it and
-    // the warning would be pure noise.
-    if (!r.itemCost && !r.recovery) {
-      const shown = view.pct ? sfBoomsAtPct(r, view.pct) : r.booms;
-      if (shown > r.spares) bits.push(`⚠ over ${r.spares} spares`);
-    }
+    if (sfOverSpares(r)) bits.push(`⚠ over ${r.spares} spares`);
     return bits.join(' · ');
   }
   if (r.axis === 'flame') {
-    const bits = [`${(r.pImprove * 100).toFixed(1)}% per reset`];
+    const bits = [`${pctText(r.pImprove)} per reset`];
     // The mean of a geometric count sits well above its median once p is small --
     // at p=0.4% the mean is 270 resets and the median 187 -- so a reader who takes
     // "270 expected" as "about 270" is misled in the direction of optimism. Quote both.
@@ -876,10 +949,22 @@ function describe(r) {
     return bits.join(' · ');
   }
   const ex = cubeExampleText(r.example, weights);
-  return `${r.cubes.toFixed(0)} cubes · p=${(r.prob * 100).toFixed(2)}%${ex ? ' · e.g. ' + ex : ''}`;
+  return `${r.cubes.toFixed(0)} cubes · p=${pctText(r.prob)}${ex ? ' · e.g. ' + ex : ''}`;
 }
 
 function renderRank() {
+  // Flame rows depend on the same inputs (level, base attack, weights) and every
+  // one of those already calls renderRank, so refresh both together.
+  if (renderRankTable()) renderFlames();
+}
+
+/*
+ * The ranking alone. Flame edits call this directly: they change the flame-reset
+ * rows, but going through renderRank would rebuild the flames table and the very
+ * input being typed into. Returns false when there is nothing to rank, in which
+ * case renderRank has never refreshed the flames either.
+ */
+function renderRankTable() {
   const list = candidates();
   const body = document.getElementById('rankBody');
   const meta = document.getElementById('rankMeta');
@@ -889,14 +974,14 @@ function renderRank() {
       text: 'Paste your MapleScouter weights to rank anything.' })));
     meta.textContent = '';
     renderPager(1);
-    return;
+    return false;
   }
   if (!list.length) {
     body.replaceChildren(el('tr', {}, el('td', { colspan: 8, class: 'empty',
       text: 'Nothing to improve — every slot is at its cap with no worthwhile cube target.' })));
     meta.textContent = '';
     renderPager(1);
-    return;
+    return false;
   }
 
   const size = state.pageSize || list.length;
@@ -930,12 +1015,10 @@ function renderRank() {
     el('td', { class: 'num' + (r.unreachable ? ' bad' : ''), text: meso(r.cost) }),
     el('td', { class: 'num', text: stat(r.gain) }),
     el('td', { class: 'num' + (r === best ? ' best' : ''), text: meso(r.per) }),
-    el('td', { class: 'detail' + (r.booms > r.spares ? ' warn' : ''), text: describe(r) }),
+    el('td', { class: 'detail' + (sfOverSpares(r) ? ' warn' : ''), text: describe(r) }),
   ])));
 
-  // Flame rows depend on the same inputs (level, base attack, weights) and every
-  // one of those already calls renderRank, so refresh both together.
-  renderFlames();
+  return true;
 }
 
 /**
@@ -974,8 +1057,12 @@ function renderPager(pages) {
  * affect a flame. flameDistributionCached already stops the 6.6k-entry distribution
  * being rebuilt, but flameReroll still walked it per row.
  *
- * The key covers every input, so this cannot go stale. Refreshing flames from
- * renderRank stays: it is the safe direction, and now it is cheap.
+ * The key covers every input, so the NUMBERS cannot go stale. Only numbers are
+ * cached: the key is field values, not object identity, so a cached row used to
+ * carry whichever slot object first produced those values. After a pendant swap (or
+ * on another character with an identical untouched slot) the "Pendant 1" row was
+ * still bound to what was now Pendant 2, and typing into it edited the wrong item.
+ * The live slot object is attached fresh on every call instead.
  */
 const _flameRowCache = new Map();
 
@@ -985,22 +1072,22 @@ function flameRowData(meta, g) {
   const key = [meta.key, g.level, g.flameType, !!g.flameAdv, g.baseAtt,
                !!g.on, !!g.flameOn,
                ...FLAME_INPUTS.map(([k]) => g[k] || 0)].join('|');
-  const memo = _flameRowCache.get(key);
-  if (memo) return memo;
-
-  const opts = {
-    flameType: g.flameType, nonAdvantaged: !g.flameAdv, baseAtt: g.baseAtt,
-  };
-  const kind = meta.key === 'weapon' ? 'weapon' : 'armor';
-  const dist = flameDistributionCached(kind, g.level, weights, opts);
-  const now = flameCurrentValue(g, weights);
-  const row = {
-    meta, g, now, slotOrder: SLOTS.indexOf(meta),
-    off: !g.on || !g.flameOn,
-    ...flameReroll(dist, now),
-  };
-  _flameRowCache.set(key, row);
-  return row;
+  let calc = _flameRowCache.get(key);
+  if (!calc) {
+    const opts = {
+      flameType: g.flameType, nonAdvantaged: !g.flameAdv, baseAtt: g.baseAtt,
+    };
+    const kind = meta.key === 'weapon' ? 'weapon' : 'armor';
+    const dist = flameDistributionCached(kind, g.level, weights, opts);
+    const now = flameCurrentValue(g, weights);
+    calc = {
+      now, slotOrder: SLOTS.indexOf(meta),
+      off: !g.on || !g.flameOn,
+      ...flameReroll(dist, now),
+    };
+    _flameRowCache.set(key, calc);
+  }
+  return { meta, g, ...calc };
 }
 
 function flameRows() {
@@ -1056,7 +1143,9 @@ function renderFlames() {
     // being typed into, so the second keystroke lands nowhere and the row jumps to
     // a new sorted position mid-edit. Refresh just this row's computed cells and
     // leave the ordering until an explicit recalculate or a header click.
-    const live = () => refreshFlameRow(r.meta.key);
+    // The ranking's flame-reset rows read these same fields, so they are redrawn too;
+    // before, they kept pricing the old flame until some unrelated edit.
+    const live = () => { refreshFlameRow(r.meta.key); renderRankTable(); };
     // Same leading On | Slot | Lv as the gear table. The rank index is gone: order
     // already conveys rank, and dropping it makes the two tables line up.
     return el('tr', { id: 'flrow-' + r.meta.key, class: r.off ? 'off' : null }, [
@@ -1097,7 +1186,7 @@ function flameCells(r, isBest) {
     el('td', { class: 'num', text: stat(flameScore(r.now, weights)) }),
     el('td', { class: 'num', text: stat(r.expected) }),
     el('td', { class: 'num', text: stat(r.max) }),
-    el('td', { class: 'num', text: (r.pImprove * 100).toFixed(2) + '%' }),
+    el('td', { class: 'num', text: pctText(r.pImprove) }),
     el('td', { class: 'num' + (isBest && r.gainPerRoll > 0 ? ' best' : ''),
                text: stat(r.gainPerRoll) }),
     el('td', { class: 'num detail', text: !isFinite(r.rollsToBeat) ? 'never'
@@ -1140,7 +1229,9 @@ function renderSfModes() {
   const box = document.getElementById('sfModes');
   const cfg = state.sf;
   const apply = () => {
-    save(); sfCacheClear(); renderSfModes(); renderRank();
+    // renderGear too: every blank Plan cell shows the global strategy as its
+    // placeholder, and kept showing the old one after a preset click.
+    save(); sfCacheClear(); renderSfModes(); renderGear(); renderRank();
   };
 
   const current = sfModesName(cfg.modes);
@@ -1259,8 +1350,9 @@ function renderSfSettings() {
   const ms = document.getElementById('milestones');
   ms.value = state.milestones.join(', ');
   ms.oninput = () => {
+    // whole stars only: 17.5 priced 15->18 while gaining only 15->17
     const vals = ms.value.split(/[,\s]+/).map(Number)
-      .filter(n => Number.isFinite(n) && n > 0 && n <= 30);
+      .filter(n => Number.isInteger(n) && n > 0 && n <= 30);
     state.milestones = [...new Set(vals)].sort((a, b) => a - b);
     save(); renderRank();
   };
@@ -1606,7 +1698,7 @@ function renderCompare(recompute = false) {
     el('td', { class: 'slot-name', text: r.charName }),
     el('td', { text: r.meta.label }),
     el('td', { class: 'num', text: r.g.level }),
-    el('td', { class: 'num', text: (r.pImprove * 100).toFixed(2) + '%' }),
+    el('td', { class: 'num', text: pctText(r.pImprove) }),
     el('td', { class: 'num' + (r === bestFlame ? ' best' : ''),
       text: !isFinite(r.rollsToBeat) ? 'never'
         : view.flamePct ? String(geometricPct(r.pImprove, view.flamePct))
@@ -1626,8 +1718,7 @@ document.getElementById('scouter').addEventListener('input', (e) => {
   save();
   // renderAmounts here is safe -- the typing is in the textarea, not the grid, and a
   // new paste changes which rows exist, so the grid has to follow.
-  refreshWeights(); renderWeights(); renderAmounts(); renderRank();
-  for (const m of SLOTS) renderPotValue(m.key);
+  refreshWeights(); renderWeights(); renderAmounts(); renderGear(); renderRank();
 });
 
 document.getElementById('iedSel').addEventListener('change', (e) => {
@@ -1677,6 +1768,12 @@ const readPct = (el2) => {
   return el2.value === '' || !isFinite(v) || v <= 0 || v >= 100 ? 0 : v;
 };
 
+// Written from state, never left to the browser: a reload can restore "85" into the
+// box while the ranking, which starts from view.pct, still shows the mean. Same
+// trap the rows select had (see renderPager).
+document.getElementById('pctIn').value = view.pct || '';
+document.getElementById('flamePctIn').value = view.flamePct || '';
+
 document.getElementById('pctIn').addEventListener('input', (e) => {
   view.pct = readPct(e.target);
   view.page = 0;
@@ -1723,7 +1820,7 @@ function setAllFlames(patch) {
   for (const meta of SLOTS) {
     if (FLAMEABLE.has(meta.key)) Object.assign(c.slots[meta.key], patch);
   }
-  save(); renderFlames();
+  save(); renderRankTable(); renderFlames();
 }
 
 document.getElementById('flameAllType').addEventListener('change', (e) =>
