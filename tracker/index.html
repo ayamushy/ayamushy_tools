@@ -348,7 +348,8 @@ html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;bor
   var ARC_CUM=[0,0,12,27,47,74,110,157,217,292,384,495,627,782,962,1169,1405,1672,1972,2307,2679];
   var SAC_CUM=[0,0,29,105,246,470,795,1239,1820,2556,3465,4565];
   var ARC_SYM=["VJ","Chuchu","Lach","Arcana","Morass","Esfera"];
-  var SAC_SYM=["Cernium","Hotel","Shangri-la","Odium","Arteria","Carcion","Tallahart","Geardock"];
+  // game order. Saved levels are positional, so a reorder needs a migration in normalize (see sacOrder)
+  var SAC_SYM=["Cernium","Hotel","Odium","Shangri-la","Arteria","Carcion","Tallahart","Geardock"];
   var ARC={cap:2679,maxLv:20,daily:40,weekly:240,cum:ARC_CUM,syms:ARC_SYM,base:20,guildBonus:30,
     names:{VJ:"Vanishing Journey",Chuchu:"Chu Chu Island",Lach:"Lachelein",Arcana:"Arcana",Morass:"Morass",Esfera:"Esfera"}};
   var SAC={cap:4565,maxLv:11,daily:30,weekly:0,cum:SAC_CUM,syms:SAC_SYM,base:0,guildBonus:0,
@@ -542,6 +543,13 @@ html.theme-light .mtnav a.mtnav-link.active{background:#e7ecf3;color:#2b6cb0;bor
       while(c.arcane.extras.length<ARC_SYM.length)c.arcane.extras.push(0);
       while(c.sacred.levels.length<SAC_SYM.length)c.sacred.levels.push(0);    // e.g. adds Geardock slot
       while(c.sacred.extras.length<SAC_SYM.length)c.sacred.extras.push(0);
+      // sacOrder 2: Odium moved ahead of Shangri-La (game order). Saves from before held
+      // Shangri-La at index 2 and Odium at 3, so swap their values once to keep each
+      // level with its symbol. Every load/import/new char passes through here.
+      if(c.sacOrder!==2){
+        [c.sacred.levels,c.sacred.extras].forEach(function(a){var t=a[2];a[2]=a[3];a[3]=t;});
+        c.sacOrder=2;
+      }
       var nk=(c.name1||"")+"|"+(c.name2||"");
       if(!c.boss){var sb=SEED_BOSS[nk];if(sb)c.boss=JSON.parse(JSON.stringify(sb));}
       if(!c.badges){var sbd=SEED_BADGES[nk];if(sbd)c.badges=JSON.parse(JSON.stringify(sbd));}
